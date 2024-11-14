@@ -71,8 +71,8 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
         width: 1,
         curveness: 0.1,
         opacity: selectedNode
-            ? (link.source === selectedNode || link.target === selectedNode ? 1 : 0.1)
-            : 1
+          ? (link.source === selectedNode || link.target === selectedNode ? 1 : 0.1)
+          : 1
       }
     }));
 
@@ -92,17 +92,17 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
 
     if (selectedNode) {
       const connectedNodeIds = new Set(
-          edges
-              .filter(edge => edge.source === selectedNode || edge.target === selectedNode)
-              .flatMap(edge => [edge.source, edge.target])
+        edges
+          .filter(edge => edge.source === selectedNode || edge.target === selectedNode)
+          .flatMap(edge => [edge.source, edge.target])
       );
-
-      filteredNodes = nodes.filter(node =>
-          connectedNodeIds.has(node.id) || node.id === selectedNode
+      
+      filteredNodes = nodes.filter(node => 
+        connectedNodeIds.has(node.id) || node.id === selectedNode
       );
-
-      filteredEdges = edges.filter(edge =>
-          edge.source === selectedNode || edge.target === selectedNode
+      
+      filteredEdges = edges.filter(edge => 
+        edge.source === selectedNode || edge.target === selectedNode
       );
 
       // Center on selected node
@@ -200,19 +200,19 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
   }, []);
 
   return (
-      <div className="w-full h-full">
-        <ReactECharts
-            ref={chartRef}
-            option={getOption()}
-            style={{ height: '100%' }}
-            onEvents={handleChartEvents}
-            opts={{ renderer: 'canvas' }}
-        />
-        <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-2">
-          <div className="text-sm text-slate-600">
-            Double-click node to focus
-          </div>
+    <div className="w-full h-full">
+      <ReactECharts
+        ref={chartRef}
+        option={getOption()}
+        style={{ height: '100%' }}
+        onEvents={handleChartEvents}
+        opts={{ renderer: 'canvas' }}
+      />
+      <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-2">
+        <div className="text-sm text-slate-600">
+          Double-click node to focus
         </div>
       </div>
+    </div>
   );
 }
