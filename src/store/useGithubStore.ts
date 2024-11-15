@@ -277,8 +277,7 @@ export const useGithubStore = create<GithubState & GithubActions>()(
         try {
           const repos = await octokit.paginate('GET /orgs/{org}/repos', {
             org: organization,
-            per_page: 100,
-            type: 'public'
+            per_page: 100
           });
 
           const now = new Date().getTime();
