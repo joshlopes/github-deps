@@ -3,14 +3,16 @@ import { Octokit } from 'octokit';
 import { AuthSlice } from './authSlice';
 import { OrganizationSlice } from './organizationSlice';
 import { RepositorySlice } from './repositorySlice';
-import { GraphData, AnalysisProgress, ComposerJson } from '../../types';
-import { extractDependencies, getComposerLock, findComposerFiles, normalizeRepoName, getPackageId, decodeBase64 } from '../utils/dependencyUtils';
-
-const COLORS = {
-  MONOREPO_SERVICE: '#9333ea', // Purple for monorepo services
-  PROJECT: '#2563eb',          // Blue for standalone projects
-  DEPENDENCY: '#059669'        // Green for dependencies
-};
+import { GraphData, AnalysisProgress } from '../../types';
+import { 
+  extractDependencies, 
+  getComposerLock, 
+  findComposerFiles, 
+  normalizeRepoName, 
+  getPackageId, 
+  decodeBase64,
+  getLatestTag 
+} from '../utils/dependencyUtils';
 
 export interface DependencyState {
   graphData: GraphData;
@@ -21,6 +23,7 @@ export interface DependencyState {
 
 export interface DependencyActions {
   fetchDependencies: () => Promise<void>;
+  clearGraph: () => void;
   reset: () => void;
 }
 
@@ -38,6 +41,15 @@ export const createDependencySlice: StateCreator<
   isLoading: false,
   progress: null,
   hasAttemptedFetch: false,
+
+  clearGraph: () => {
+    set({
+      graphData: { nodes: [], links: [] },
+      isLoading: false,
+      progress: null,
+      hasAttemptedFetch: false,
+    });
+  },
 
   fetchDependencies: async () => {
     const { token, organization, repositories } = get();
@@ -61,69 +73,49 @@ export const createDependencySlice: StateCreator<
     const processedDeps = new Set<string>();
     const versionMap = new Map<string, string>();
     const packageMap = new Map<string, string>();
-    const repoPackages = new Map<string, Set<string>>();
 
     try {
       const octokit = new Octokit({
         auth: token,
-        request: { timeout: 10000 }
+        request: {
+          timeout: 10000
+        }
       });
 
-      // First pass: collect all packages per repository
-      for (const repo of selectedRepos) {
-        const composerFiles = await findComposerFiles(octokit, organization, repo.name);
-        const packages = new Set<string>();
-
-        for (const composerPath of composerFiles) {
-          try {
-            const { data: file } = await octokit.rest.repos.getContent({
-              owner: organization,
-              repo: repo.name,
-              path: composerPath,
-              request: { timeout: 10000 }
-            });
-
-            if ('content' in file) {
-              const content = decodeBase64(file.content);
-              const composerJson: ComposerJson = JSON.parse(content);
-              if (composerJson.name) {
-                packages.add(composerJson.name.toLowerCase());
-              }
-            }
-          } catch (error) {
-            console.warn(`Error reading composer file ${composerPath} in ${repo.name}:`, error);
-          }
-        }
-
-        if (packages.size > 0) {
-          repoPackages.set(repo.name, packages);
-        }
-      }
-
-      // Second pass: analyze dependencies
       for (const [index, repo] of selectedRepos.entries()) {
         const composerFiles = await findComposerFiles(octokit, organization, repo.name);
         const isPhp = composerFiles.length > 0;
         const dependencies: string[] = [];
 
+        // Get latest tag for the repository
+        const latestTag = await getLatestTag(octokit, organization, repo.name);
+
         for (const composerPath of composerFiles) {
           try {
             const { data: file } = await octokit.rest.repos.getContent({
               owner: organization,
               repo: repo.name,
               path: composerPath,
-              request: { timeout: 10000 }
+              request: {
+                timeout: 10000
+              }
             });
 
             if ('content' in file) {
               const content = decodeBase64(file.content);
-              const composerJson: ComposerJson = JSON.parse(content);
+              const composerJson: any = JSON.parse(content);
               const deps = extractDependencies(composerJson, organization);
+
               const composerLock = await getComposerLock(octokit, organization, repo.name, composerPath);
 
               const packageName = composerJson.name?.toLowerCase();
               if (!packageName) continue;
 
+              // Check if this is part of a monorepo
+              const isMonorepo = composerPath !== 'composer.json';
+              const monorepoName = isMonorepo ? repo.name : undefined;
+
+              // Create a unique ID for this package
               const packageId = getPackageId(`${organization}/${repo.name}`.toLowerCase(), packageName);
               packageMap.set(packageName, packageId);
 
@@ -145,35 +137,38 @@ export const createDependencySlice: StateCreator<
                 }
               });
 
-              // Determine if this package is part of a monorepo
-              const isMonorepoService = repoPackages.get(repo.name)?.size > 1;
-
               if (!nodes.has(packageId)) {
                 nodes.set(packageId, {
                   id: packageId,
                   name: packageName.split('/')[1],
-                  version: composerJson.version || 'dev-main',
-                  color: isMonorepoService ? COLORS.MONOREPO_SERVICE : COLORS.PROJECT,
+                  version: latestTag || composerJson.version || 'dev-main',
+                  color: isMonorepo ? '#9333ea' : '#2563eb', // Purple for monorepo services, blue for standalone
+                  isMonorepo,
+                  monorepoName,
+                  composerFiles: [composerPath],
+                  defaultBranch: repo.defaultBranch
                 });
+              } else {
+                // Update existing node with additional composer file
+                const existingNode = nodes.get(packageId);
+                existingNode.composerFiles = [...(existingNode.composerFiles || []), composerPath];
+                nodes.set(packageId, existingNode);
               }
 
-              deps.forEach(dep => {
+              deps.forEach(async dep => {
                 const normalizedDep = dep.toLowerCase();
                 const depId = packageMap.get(normalizedDep) || normalizedDep;
 
                 if (!nodes.has(depId)) {
-                  // Check if the dependency is from a monorepo
-                  const depRepo = selectedRepos.find(r => {
-                    const packages = repoPackages.get(r.name);
-                    return packages?.has(normalizedDep);
-                  });
-                  const isMonorepoDep = depRepo && repoPackages.get(depRepo.name)?.size > 1;
+                  // Get latest tag for dependency
+                  const [, depRepo] = normalizedDep.split('/');
+                  const depLatestTag = await getLatestTag(octokit, organization, depRepo);
 
                   nodes.set(depId, {
                     id: depId,
                     name: normalizedDep.split('/')[1],
-                    version: versionMap.get(normalizedDep) || 'dev-main',
-                    color: isMonorepoDep ? COLORS.MONOREPO_SERVICE : COLORS.DEPENDENCY,
+                    version: depLatestTag || versionMap.get(normalizedDep) || 'dev-main',
+                    color: '#059669', // Green for dependencies
                   });
                 }
 
@@ -229,6 +224,7 @@ export const createDependencySlice: StateCreator<
         progress: null,
       });
     } catch (error) {
+      console.error('Error fetching dependencies:', error);
       set({
         error: 'Failed to fetch dependencies. Please check your token and organization.',
         isLoading: false,
@@ -239,13 +235,29 @@ export const createDependencySlice: StateCreator<
   },
 
   reset: () => {
+    // Clear localStorage
+    localStorage.removeItem('github-deps-store');
+    
+    // Reset all state
     set({
+      // Auth state
       token: '',
+      isValidatingToken: false,
+      error: null,
+
+      // Organization state
       organization: '',
       organizations: [],
+      isLoadingOrgs: false,
+
+      // Repository state
       repositories: [],
+      isLoadingRepos: false,
+      orgCache: {},
+
+      // Dependency state
       graphData: { nodes: [], links: [] },
-      error: null,
+      isLoading: false,
       progress: null,
       hasAttemptedFetch: false,
     });

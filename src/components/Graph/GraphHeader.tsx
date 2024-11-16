@@ -9,13 +9,13 @@ interface GraphHeaderProps {
 }
 
 export function GraphHeader({ selectedNode, onNodeSelect }: GraphHeaderProps) {
-  const { reset } = useGithubStore();
+  const { clearGraph } = useGithubStore();
 
   return (
     <div className="bg-white border-b border-slate-200 px-4 py-2">
       <div className="flex items-center gap-4">
         <button
-          onClick={reset}
+          onClick={clearGraph}
           className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
         >
           <ArrowLeft className="h-5 w-5" />

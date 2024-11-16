@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import { useGithubStore } from '../../store/useGithubStore';
+import { RepoModal } from './RepoModal';
 
 const CATEGORY_COLORS = {
   monorepo: '#9333ea',    // Purple for monorepo services
@@ -15,9 +16,18 @@ interface GraphViewProps {
   onNodeSelect: (nodeId: string | null) => void;
 }
 
+interface ModalInfo {
+  repoId: string;
+  composerFiles: string[];
+  latestTag?: string;
+  repoUrl: string;
+}
+
 export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
-  const { graphData } = useGithubStore();
+  const { graphData, organization } = useGithubStore();
   const chartRef = useRef<ReactECharts>(null);
+  const [modalInfo, setModalInfo] = useState<ModalInfo | null>(null);
+  const clickTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const getGraphData = useCallback(() => {
     const nodes = graphData.nodes.map(node => ({
@@ -41,7 +51,9 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
         distance: 5,
         formatter: [
           `{title|${node.name}}`,
-          `{small|v${node.version}}`
+          node.isMonorepo 
+            ? `{monorepo|${node.monorepoName}}`
+            : `{small|${node.version}}`
         ].join('\n'),
         rich: {
           title: {
@@ -55,6 +67,12 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
           small: {
             color: '#64748b',
             fontSize: 12,
+            padding: [0, 0, 2, 0]
+          },
+          monorepo: {
+            color: '#9333ea',
+            fontSize: 12,
+            fontStyle: 'italic',
             padding: [0, 0, 2, 0]
           }
         }
@@ -133,6 +151,10 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
           if (params.dataType === 'edge') {
             return `${params.data.source} → ${params.data.target}<br/>Version: ${params.data.value}`;
           }
+          const node = graphData.nodes.find(n => n.id === params.data.id);
+          if (node?.isMonorepo) {
+            return `${node.name}<br/>Service in ${node.monorepoName}`;
+          }
           return `${params.data.id}<br/>Version: ${params.data.value}`;
         }
       },
@@ -186,12 +208,32 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
         }
       ]
     };
-  }, [getGraphData, selectedNode]);
+  }, [getGraphData, selectedNode, graphData.nodes]);
 
   const handleChartEvents = {
-    'dblclick': (params: any) => {
+    'click': (params: any) => {
       if (params.dataType === 'node') {
-        onNodeSelect(params.data.id === selectedNode ? null : params.data.id);
+        if (clickTimeoutRef.current) {
+          // Double click detected
+          clearTimeout(clickTimeoutRef.current);
+          clickTimeoutRef.current = null;
+          onNodeSelect(params.data.id === selectedNode ? null : params.data.id);
+        } else {
+          // Single click - show modal after a short delay
+          clickTimeoutRef.current = setTimeout(() => {
+            const [orgRepo] = params.data.id.split('>');
+            const [, repo] = orgRepo.split('/');
+            const node = graphData.nodes.find(n => n.id === params.data.id);
+            
+            setModalInfo({
+              repoId: params.data.id,
+              composerFiles: node?.composerFiles || [],
+              latestTag: node?.version,
+              repoUrl: `https://github.com/${organization}/${repo}`
+            });
+            clickTimeoutRef.current = null;
+          }, 250);
+        }
       } else if (!params.data) {
         onNodeSelect(null);
       }
@@ -205,6 +247,12 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
         chart.hideLoading();
       });
     }
+
+    return () => {
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+      }
+    };
   }, []);
 
   return (
@@ -218,9 +266,15 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       />
       <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-2">
         <div className="text-sm text-slate-600">
-          Double-click node to focus
+          Click for details, double-click to focus
         </div>
       </div>
+      {modalInfo && (
+        <RepoModal
+          {...modalInfo}
+          onClose={() => setModalInfo(null)}
+        />
+      )}
     </div>
   );
 }

@@ -3,6 +3,10 @@ export interface DependencyNode {
   name: string;
   version: string;
   color?: string;
+  isMonorepo?: boolean;
+  monorepoName?: string;
+  composerFiles?: string[];
+  defaultBranch?: string;
 }
 
 export interface DependencyLink {
@@ -41,13 +45,9 @@ export interface Repository {
   pushed_at: string;
   selected?: boolean;
   composerFiles?: string[];
+  defaultBranch?: string;
 }
 
 export interface CachedRepository extends Repository {
   cachedAt: number;
-}
-
-export interface OrganizationCache {
-  repositories: CachedRepository[];
-  timestamp: number;
 }

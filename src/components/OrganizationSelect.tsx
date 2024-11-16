@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GithubIcon, Loader2, Search, LogOut, XCircle } from 'lucide-react';
+import { GithubIcon, Loader2, Search, LogOut, XCircle, GitBranch } from 'lucide-react';
 import { useGithubStore } from '../store/useGithubStore';
 import { ProgressIndicator } from './ProgressIndicator';
 import { RepositoryList } from './RepositoryList';
@@ -77,7 +77,7 @@ export function OrganizationSelect() {
       return (
         <>
           <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-          Analyzing...
+          Analyzing Dependencies...
         </>
       );
     }
@@ -85,7 +85,7 @@ export function OrganizationSelect() {
       return (
         <>
           <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-          Finding repositories...
+          Scanning Organization...
         </>
       );
     }
@@ -171,6 +171,18 @@ export function OrganizationSelect() {
           <LogOut className="h-5 w-5" />
         </button>
       </div>
+
+      {isLoadingRepos && (
+        <div className="bg-indigo-50 text-indigo-700 p-4 rounded-md flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <div className="flex-1">
+            <p className="font-medium">Scanning Organization</p>
+            <p className="text-sm text-indigo-600">
+              Finding repositories and analyzing their structure...
+            </p>
+          </div>
+        </div>
+      )}
 
       {organization && !isLoadingRepos && repositories.length > 0 && (
         <RepositoryList />

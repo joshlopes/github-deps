@@ -15,7 +15,7 @@ export interface AuthActions {
 
 export type AuthSlice = AuthState & AuthActions;
 
-export const createAuthSlice: StateCreator<AuthSlice> = (set) => ({
+export const createAuthSlice: StateCreator<AuthSlice> = (set, get) => ({
   token: '',
   isValidatingToken: false,
   error: null,

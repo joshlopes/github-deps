@@ -61,21 +61,51 @@ export const createRepositorySlice: StateCreator<
       const octokit = new Octokit({ auth: token });
       const repos = await octokit.paginate('GET /orgs/{org}/repos', {
         org: organization,
-        per_page: 100
+        per_page: 100,
+        request: {
+          timeout: 10000
+        }
       });
 
-      const activeRepos = repos
-        .filter((repo: Repository) => {
-          const pushedAt = new Date(repo.pushed_at).getTime();
-          return !repo.archived && (now - pushedAt <= TWO_WEEKS);
-        })
-        .map(repo => ({
-          name: repo.name,
-          archived: repo.archived,
-          pushed_at: repo.pushed_at,
-          selected: true,
-          cachedAt: now
-        }));
+      const activeRepos = await Promise.all(
+        repos
+          .filter((repo: Repository) => {
+            const pushedAt = new Date(repo.pushed_at).getTime();
+            return !repo.archived && (now - pushedAt <= TWO_WEEKS);
+          })
+          .map(async (repo: any) => {
+            try {
+              // Fetch repository details to get the default branch
+              const { data: repoDetails } = await octokit.rest.repos.get({
+                owner: organization,
+                repo: repo.name,
+                request: {
+                  timeout: 10000
+                }
+              });
+
+              return {
+                name: repo.name,
+                archived: repo.archived,
+                pushed_at: repo.pushed_at,
+                selected: true,
+                defaultBranch: repoDetails.default_branch || 'main', // Fallback to 'main' if not found
+                cachedAt: now
+              };
+            } catch (error) {
+              console.warn(`Error fetching details for ${repo.name}:`, error);
+              // Fallback values if the API call fails
+              return {
+                name: repo.name,
+                archived: repo.archived,
+                pushed_at: repo.pushed_at,
+                selected: true,
+                defaultBranch: repo.default_branch || 'main',
+                cachedAt: now
+              };
+            }
+          })
+      );
 
       set(state => ({
         repositories: activeRepos,
@@ -89,6 +119,7 @@ export const createRepositorySlice: StateCreator<
         isLoadingRepos: false
       }));
     } catch (error) {
+      console.error('Error fetching repositories:', error);
       set({
         error: 'Failed to fetch repositories.',
         isLoadingRepos: false,

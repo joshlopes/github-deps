@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGithubStore } from '../store/useGithubStore';
-import { PackageSearch, GitFork } from 'lucide-react';
+import { PackageSearch, GitFork, GitBranch, Loader2 } from 'lucide-react';
 
 export function ProgressIndicator() {
   const { progress } = useGithubStore();
@@ -33,22 +33,33 @@ export function ProgressIndicator() {
             {progress.isPhp ? 'PHP Project' : 'Non-PHP Project'}
           </span>
         </div>
-        {progress.isPhp && progress.dependencies.length > 0 && (
-          <div className="mt-3">
-            <div className="flex items-center gap-2 mb-2">
-              <GitFork className="h-4 w-4 text-gray-500" />
-              <span className="text-sm text-gray-600">Internal Dependencies:</span>
+        {progress.isPhp && (
+          <div className="mt-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <GitBranch className="h-4 w-4 text-gray-500" />
+              <span className="text-sm text-gray-600">
+                <Loader2 className="h-3.5 w-3.5 inline mr-1 animate-spin" />
+                Fetching latest tags...
+              </span>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {progress.dependencies.map((dep) => (
-                <span
-                  key={dep}
-                  className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full"
-                >
-                  {dep.split('/')[1]}
-                </span>
-              ))}
-            </div>
+            {progress.dependencies.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <GitFork className="h-4 w-4 text-gray-500" />
+                  <span className="text-sm text-gray-600">Internal Dependencies:</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {progress.dependencies.map((dep) => (
+                    <span
+                      key={dep}
+                      className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-full"
+                    >
+                      {dep.split('/')[1]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

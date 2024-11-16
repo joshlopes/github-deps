@@ -1,6 +1,44 @@
 import { Octokit } from 'octokit';
 import { ComposerJson } from '../../types';
 
+// Helper function to compare semantic versions
+function compareVersions(a: string, b: string): number {
+  // Remove 'v' prefix if present
+  const cleanA = a.replace(/^v/, '');
+  const cleanB = b.replace(/^v/, '');
+
+  const partsA = cleanA.split('.').map(part => {
+    // Handle pre-release versions (e.g., -alpha, -beta, -RC)
+    const preRelease = part.match(/(\d+)(.+)?/);
+    return preRelease ? [parseInt(preRelease[1]), preRelease[2] || ''] : [parseInt(part), ''];
+  });
+
+  const partsB = cleanB.split('.').map(part => {
+    const preRelease = part.match(/(\d+)(.+)?/);
+    return preRelease ? [parseInt(preRelease[1]), preRelease[2] || ''] : [parseInt(part), ''];
+  });
+
+  // Compare each part
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const [numA, suffixA] = partsA[i] || [0, ''];
+    const [numB, suffixB] = partsB[i] || [0, ''];
+
+    if (numA !== numB) {
+      return numB - numA; // Descending order
+    }
+
+    if (suffixA !== suffixB) {
+      // No suffix is greater than any suffix
+      if (!suffixA) return -1;
+      if (!suffixB) return 1;
+      // Compare suffixes alphabetically (e.g., alpha < beta < rc)
+      return suffixB.localeCompare(suffixA);
+    }
+  }
+
+  return 0;
+}
+
 export function decodeBase64(base64: string): string {
   const binaryString = atob(base64.replace(/\s/g, ''));
   return binaryString;
@@ -13,6 +51,32 @@ export function normalizeRepoName(name: string, organization: string): string {
 
 export function getPackageId(repoName: string, composerName: string): string {
   return `${repoName}>${composerName}`;
+}
+
+export async function getLatestTag(octokit: Octokit, owner: string, repo: string): Promise<string | null> {
+  try {
+    const { data: tags } = await octokit.rest.repos.listTags({
+      owner,
+      repo,
+      per_page: 100, // Fetch more tags to ensure we don't miss the latest
+      request: {
+        timeout: 10000
+      }
+    });
+
+    if (!tags.length) return null;
+
+    // Filter out non-version tags and sort remaining tags
+    const versionTags = tags
+      .map(tag => tag.name)
+      .filter(tag => /^v?\d+(\.\d+)*(-\w+)?$/.test(tag)) // Match version tags like v1.2.3 or 1.2.3-beta
+      .sort(compareVersions);
+
+    return versionTags[0] || tags[0].name; // Fallback to first tag if no version tags found
+  } catch (error) {
+    console.warn(`Error fetching tags for ${owner}/${repo}:`, error);
+    return null;
+  }
 }
 
 export function extractDependencies(composerJson: ComposerJson, organization: string): Set<string> {
