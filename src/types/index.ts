@@ -27,11 +27,6 @@ export interface ComposerJson {
   }>;
 }
 
-export interface CacheData {
-  timestamp: number;
-  graphData: GraphData;
-}
-
 export interface AnalysisProgress {
   total: number;
   current: number;
@@ -44,4 +39,15 @@ export interface Repository {
   name: string;
   archived: boolean;
   pushed_at: string;
+  selected?: boolean;
+  composerFiles?: string[];
+}
+
+export interface CachedRepository extends Repository {
+  cachedAt: number;
+}
+
+export interface OrganizationCache {
+  repositories: CachedRepository[];
+  timestamp: number;
 }

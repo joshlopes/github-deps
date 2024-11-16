@@ -1,46 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { Octokit } from 'octokit';
-import { ComposerJson, GraphData, CacheData, AnalysisProgress, Repository } from '../types';
+import { ComposerJson, GraphData, AnalysisProgress, Repository, OrganizationCache, CachedRepository } from '../types';
 
-const CACHE_EXPIRY = 1000 * 60 * 60; // 1 hour
 const TWO_WEEKS = 1000 * 60 * 60 * 24 * 14; // 2 weeks in milliseconds
-
-interface GithubState {
-  token: string;
-  organization: string;
-  organizations: Array<{ login: string; name: string | null }>;
-  isValidatingToken: boolean;
-  isLoadingOrgs: boolean;
-  isLoading: boolean;
-  graphData: GraphData;
-  error: string | null;
-  progress: AnalysisProgress | null;
-  cache: Record<string, CacheData>;
-  hasAttemptedFetch: boolean;
-}
-
-interface GithubActions {
-  setToken: (token: string) => void;
-  setOrganization: (org: string) => void;
-  validateToken: () => Promise<boolean>;
-  fetchOrganizations: () => Promise<void>;
-  fetchDependencies: () => Promise<void>;
-  reset: () => void;
-  clearError: () => void;
-  clearCache: (org: string) => void;
-}
-
-interface ComposerLock {
-  packages: Array<{
-    name: string;
-    version: string;
-  }>;
-  "packages-dev": Array<{
-    name: string;
-    version: string;
-  }>;
-}
+const REPO_CACHE_EXPIRY = 1000 * 60 * 60 * 24; // 24 hours
 
 function decodeBase64(base64: string): string {
   const binaryString = atob(base64.replace(/\s/g, ''));
@@ -50,6 +14,10 @@ function decodeBase64(base64: string): string {
 function normalizeRepoName(name: string, organization: string): string {
   const [orgName, repoName] = name.split('/');
   return `${organization}/${repoName.toLowerCase()}`;
+}
+
+function getPackageId(repoName: string, composerName: string): string {
+  return `${repoName}||${composerName}`;
 }
 
 function extractDependencies(composerJson: ComposerJson, organization: string): Set<string> {
@@ -93,10 +61,6 @@ function extractDependencies(composerJson: ComposerJson, organization: string): 
   return deps;
 }
 
-function getMonorepoPackageId(repoName: string, composerName: string): string {
-  return `${repoName}||${composerName}`;
-}
-
 async function findComposerFiles(octokit: Octokit, owner: string, repo: string): Promise<string[]> {
   try {
     const { data: repoData } = await octokit.rest.repos.get({
@@ -137,7 +101,7 @@ async function findComposerFiles(octokit: Octokit, owner: string, repo: string):
   }
 }
 
-async function getComposerLock(octokit: Octokit, owner: string, repo: string, path: string): Promise<ComposerLock | null> {
+async function getComposerLock(octokit: Octokit, owner: string, repo: string, path: string): Promise<any | null> {
   try {
     const lockPath = path.replace('composer.json', 'composer.lock');
     const { data: file } = await octokit.rest.repos.getContent({
@@ -159,40 +123,86 @@ async function getComposerLock(octokit: Octokit, owner: string, repo: string, pa
   return null;
 }
 
+interface GithubState {
+  token: string;
+  organization: string;
+  organizations: Array<{ login: string; name: string | null }>;
+  repositories: Repository[];
+  isValidatingToken: boolean;
+  isLoadingOrgs: boolean;
+  isLoadingRepos: boolean;
+  isLoading: boolean;
+  graphData: GraphData;
+  error: string | null;
+  progress: AnalysisProgress | null;
+  orgCache: Record<string, OrganizationCache>;
+  hasAttemptedFetch: boolean;
+}
+
+interface GithubActions {
+  setToken: (token: string) => void;
+  setOrganization: (org: string) => void;
+  validateToken: () => Promise<boolean>;
+  fetchOrganizations: () => Promise<void>;
+  fetchRepositories: () => Promise<void>;
+  fetchDependencies: () => Promise<void>;
+  toggleRepository: (repoName: string) => void;
+  selectAllRepositories: () => void;
+  deselectAllRepositories: () => void;
+  reset: () => void;
+  clearError: () => void;
+}
+
 export const useGithubStore = create<GithubState & GithubActions>()(
     persist(
         (set, get) => ({
           token: '',
           organization: '',
           organizations: [],
+          repositories: [],
           isValidatingToken: false,
           isLoadingOrgs: false,
+          isLoadingRepos: false,
           isLoading: false,
           graphData: { nodes: [], links: [] },
           error: null,
           progress: null,
-          cache: {},
+          orgCache: {},
           hasAttemptedFetch: false,
 
           setToken: (token: string) => {
             set({ token, error: null });
+            if (token) {
+              get().fetchOrganizations();
+            }
           },
 
           setOrganization: (org: string) => {
-            set({ organization: org, error: null });
+            set({ organization: org, error: null, repositories: [] });
+          },
+
+          toggleRepository: (repoName: string) => {
+            set(state => ({
+              repositories: state.repositories.map(repo =>
+                  repo.name === repoName ? { ...repo, selected: !repo.selected } : repo
+              )
+            }));
+          },
+
+          selectAllRepositories: () => {
+            set(state => ({
+              repositories: state.repositories.map(repo => ({ ...repo, selected: true }))
+            }));
+          },
+
+          deselectAllRepositories: () => {
+            set(state => ({
+              repositories: state.repositories.map(repo => ({ ...repo, selected: false }))
+            }));
           },
 
           clearError: () => {
             set({ error: null });
-          },
-
-          clearCache: (org: string) => {
-            set(state => ({
-              cache: {
-                ...state.cache,
-                [org]: undefined
-              }
-            }));
           },
 
           validateToken: async () => {
@@ -240,11 +250,70 @@ export const useGithubStore = create<GithubState & GithubActions>()(
             }
           },
 
-          fetchDependencies: async () => {
-            const { token, organization, cache } = get();
+          fetchRepositories: async () => {
+            const { token, organization, orgCache } = get();
+            set({ isLoadingRepos: true, error: null });
 
-            if (!organization) {
-              set({ error: 'Please provide organization' });
+            try {
+              const cachedData = orgCache[organization];
+              const now = Date.now();
+
+              if (cachedData && now - cachedData.timestamp < REPO_CACHE_EXPIRY) {
+                set({
+                  repositories: cachedData.repositories.map(repo => ({
+                    ...repo,
+                    selected: true
+                  })),
+                  isLoadingRepos: false
+                });
+                return;
+              }
+
+              const octokit = new Octokit({ auth: token });
+              const repos = await octokit.paginate('GET /orgs/{org}/repos', {
+                org: organization,
+                per_page: 100
+              });
+
+              const activeRepos = repos
+                  .filter((repo: Repository) => {
+                    const pushedAt = new Date(repo.pushed_at).getTime();
+                    return !repo.archived && (now - pushedAt <= TWO_WEEKS);
+                  })
+                  .map(repo => ({
+                    name: repo.name,
+                    archived: repo.archived,
+                    pushed_at: repo.pushed_at,
+                    selected: true,
+                    cachedAt: now
+                  }));
+
+              set(state => ({
+                repositories: activeRepos,
+                orgCache: {
+                  ...state.orgCache,
+                  [organization]: {
+                    repositories: activeRepos,
+                    timestamp: now
+                  }
+                },
+                isLoadingRepos: false
+              }));
+            } catch (error) {
+              set({
+                error: 'Failed to fetch repositories.',
+                isLoadingRepos: false,
+                repositories: []
+              });
+            }
+          },
+
+          fetchDependencies: async () => {
+            const { token, organization, repositories } = get();
+            const selectedRepos = repositories.filter(repo => repo.selected);
+
+            if (!selectedRepos.length) {
+              set({ error: 'Please select at least one repository' });
               return;
             }
 
@@ -256,42 +325,21 @@ export const useGithubStore = create<GithubState & GithubActions>()(
               hasAttemptedFetch: true
             });
 
-            const cachedData = cache[organization];
-            if (cachedData && Date.now() - cachedData.timestamp < CACHE_EXPIRY) {
-              set({
-                graphData: cachedData.graphData,
-                isLoading: false,
-                progress: null,
-              });
-              return;
-            }
-
-            const octokit = new Octokit({
-              auth: token,
-              request: {
-                timeout: 10000
-              }
-            });
-
             const nodes = new Map();
             const links: GraphData['links'] = [];
             const processedDeps = new Set<string>();
             const versionMap = new Map<string, string>();
+            const packageMap = new Map<string, string>();
 
             try {
-              const repos = await octokit.paginate('GET /orgs/{org}/repos', {
-                org: organization,
-                per_page: 100
+              const octokit = new Octokit({
+                auth: token,
+                request: {
+                  timeout: 10000
+                }
               });
 
-              const now = new Date().getTime();
-              const activeRepos = repos.filter((repo: Repository) => {
-                const pushedAt = new Date(repo.pushed_at).getTime();
-                return !repo.archived && (now - pushedAt <= TWO_WEEKS);
-              });
-
-              for (const [index, repo] of activeRepos.entries()) {
-                const normalizedRepoName = repo.name.toLowerCase();
+              for (const [index, repo] of selectedRepos.entries()) {
                 const composerFiles = await findComposerFiles(octokit, organization, repo.name);
                 const isPhp = composerFiles.length > 0;
                 const dependencies: string[] = [];
@@ -314,12 +362,12 @@ export const useGithubStore = create<GithubState & GithubActions>()(
 
                       const composerLock = await getComposerLock(octokit, organization, repo.name, composerPath);
 
-                      // Get the package name from composer.json
                       const packageName = composerJson.name?.toLowerCase();
                       if (!packageName) continue;
 
                       // Create a unique ID for this package in the monorepo
-                      const packageId = getMonorepoPackageId(`${organization}/${normalizedRepoName}`, packageName);
+                      const packageId = getPackageId(`${organization}/${repo.name}`.toLowerCase(), packageName);
+                      packageMap.set(packageName, packageId);
 
                       deps.forEach(dep => {
                         const normalizedDep = dep.toLowerCase();
@@ -327,7 +375,6 @@ export const useGithubStore = create<GithubState & GithubActions>()(
                           dependencies.push(normalizedDep);
                         }
 
-                        // Get actual version from composer.lock if available
                         if (composerLock) {
                           const allPackages = [
                             ...(composerLock.packages || []),
@@ -340,9 +387,9 @@ export const useGithubStore = create<GithubState & GithubActions>()(
                         }
                       });
 
-                      if (!nodes.has(packageId.toLowerCase())) {
-                        nodes.set(packageId.toLowerCase(), {
-                          id: packageId.toLowerCase(),
+                      if (!nodes.has(packageId)) {
+                        nodes.set(packageId, {
+                          id: packageId,
                           name: packageName.split('/')[1],
                           version: composerJson.version || 'dev-main',
                           color: '#2563eb',
@@ -351,16 +398,18 @@ export const useGithubStore = create<GithubState & GithubActions>()(
 
                       deps.forEach(dep => {
                         const normalizedDep = dep.toLowerCase();
-                        if (!nodes.has(normalizedDep)) {
-                          nodes.set(normalizedDep, {
-                            id: normalizedDep,
+                        const depId = packageMap.get(normalizedDep) || normalizedDep;
+
+                        if (!nodes.has(depId)) {
+                          nodes.set(depId, {
+                            id: depId,
                             name: normalizedDep.split('/')[1],
                             version: versionMap.get(normalizedDep) || 'dev-main',
                             color: '#059669',
                           });
                         }
 
-                        const linkKey = `${packageId.toLowerCase()}-${normalizedDep}`;
+                        const linkKey = `${packageId}-${depId}`;
                         if (!processedDeps.has(linkKey)) {
                           const version = versionMap.get(normalizedDep) ||
                               composerJson.require?.[dep] ||
@@ -368,8 +417,8 @@ export const useGithubStore = create<GithubState & GithubActions>()(
                               'dev-main';
 
                           links.push({
-                            source: packageId.toLowerCase(),
-                            target: normalizedDep,
+                            source: packageId,
+                            target: depId,
                             version
                           });
                           processedDeps.add(linkKey);
@@ -383,7 +432,7 @@ export const useGithubStore = create<GithubState & GithubActions>()(
 
                 set({
                   progress: {
-                    total: activeRepos.length,
+                    total: selectedRepos.length,
                     current: index + 1,
                     currentRepo: repo.name,
                     isPhp,
@@ -406,18 +455,11 @@ export const useGithubStore = create<GithubState & GithubActions>()(
                 return;
               }
 
-              set(state => ({
+              set({
                 graphData,
-                cache: {
-                  ...state.cache,
-                  [organization]: {
-                    timestamp: Date.now(),
-                    graphData,
-                  }
-                },
                 isLoading: false,
                 progress: null,
-              }));
+              });
             } catch (error) {
               set({
                 error: 'Failed to fetch dependencies. Please check your token and organization.',
@@ -433,6 +475,7 @@ export const useGithubStore = create<GithubState & GithubActions>()(
               token: '',
               organization: '',
               organizations: [],
+              repositories: [],
               graphData: { nodes: [], links: [] },
               error: null,
               progress: null,
@@ -443,8 +486,14 @@ export const useGithubStore = create<GithubState & GithubActions>()(
         {
           name: 'github-deps-store',
           partialize: (state) => ({
-            cache: state.cache,
+            token: state.token,
+            orgCache: state.orgCache,
           }),
+          onRehydrateStorage: () => (state) => {
+            if (state?.token) {
+              state.fetchOrganizations();
+            }
+          },
         }
     )
 );
