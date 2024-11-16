@@ -18,7 +18,7 @@ export function normalizeRepoName(name: string, organization: string): string {
 }
 
 export function getPackageId(repoName: string, composerName: string): string {
-  return `${repoName}||${composerName}`;
+  return `${repoName}>${composerName}`;
 }
 
 export function extractDependencies(composerJson: ComposerJson, organization: string): Set<string> {
