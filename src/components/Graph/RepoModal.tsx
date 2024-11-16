@@ -9,9 +9,47 @@ import {
   Calendar,
   ArrowUpRight,
   Code,
-  GitPullRequest
+  GitPullRequest,
+  AlertTriangle,
+  Lock
 } from 'lucide-react';
 import { useGithubStore } from '../../store/useGithubStore';
+import { getVersionDifference, VersionInfo } from '../../store/utils/dependencyUtils';
+
+function VersionBadge({ versionInfo }: { versionInfo: VersionInfo }) {
+  if (versionInfo.type === 'none') {
+    return (
+      <span className="text-xs text-gray-500">
+        v{versionInfo.current}
+      </span>
+    );
+  }
+
+  const colors = {
+    patch: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    minor: 'bg-orange-50 text-orange-700 border-orange-200',
+    major: 'bg-red-50 text-red-700 border-red-200'
+  };
+
+  const messages = {
+    patch: 'Patch update available',
+    minor: 'Minor update available',
+    major: 'Major update available'
+  };
+
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-xs text-gray-500 line-through">
+        v{versionInfo.current}
+      </span>
+      <span className={`text-xs px-1.5 py-0.5 rounded border ${colors[versionInfo.type]} flex items-center gap-1`}>
+        <AlertTriangle className="h-3 w-3" />
+        v{versionInfo.latest}
+        <span className="text-[10px] opacity-75">({messages[versionInfo.type]})</span>
+      </span>
+    </div>
+  );
+}
 
 interface RepoModalProps {
   repoId: string;
@@ -22,7 +60,7 @@ interface RepoModalProps {
 }
 
 export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repoUrl }: RepoModalProps) {
-  const { graphData, repositories } = useGithubStore();
+  const { graphData, repositories, organization } = useGithubStore();
   const modalRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -44,19 +82,38 @@ export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repo
   
   const dependencies = graphData.links
     .filter(link => link.source === repoId)
-    .map(link => ({
-      id: link.target,
-      version: link.version,
-      node: graphData.nodes.find(n => n.id === link.target)
-    }));
+    .map(link => {
+      const depNode = graphData.nodes.find(n => n.id === link.target);
+      const versionInfo = getVersionDifference(link.version, depNode?.version || '');
+      const [depOrgRepo] = (depNode?.id || '').split('>');
+      const [, depRepo] = depOrgRepo.split('/');
+      return {
+        id: link.target,
+        version: link.version,
+        node: depNode,
+        versionInfo,
+        repoUrl: `https://github.com/${organization}/${depRepo}`
+      };
+    });
 
   const dependents = graphData.links
     .filter(link => link.target === repoId)
-    .map(link => ({
-      id: link.source,
-      version: link.version,
-      node: graphData.nodes.find(n => n.id === link.source)
-    }));
+    .map(link => {
+      const depNode = graphData.nodes.find(n => n.id === link.source);
+      const versionInfo = getVersionDifference(link.version, node?.version || '');
+      const [depOrgRepo] = (depNode?.id || '').split('>');
+      const [, depRepo] = depOrgRepo.split('/');
+      return {
+        id: link.source,
+        version: link.version,
+        node: depNode,
+        versionInfo,
+        repoUrl: `https://github.com/${organization}/${depRepo}`
+      };
+    });
+
+  const outdatedDeps = dependencies.filter(dep => dep.versionInfo.type !== 'none');
+  const hasOutdatedDeps = outdatedDeps.length > 0;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 p-4 overflow-y-auto">
@@ -118,6 +175,26 @@ export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repo
             </div>
           </div>
 
+          {/* Outdated Dependencies Warning */}
+          {hasOutdatedDeps && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-amber-700">
+                <AlertTriangle className="h-4 w-4" />
+                <h3 className="font-medium text-sm">
+                  {outdatedDeps.length} {outdatedDeps.length === 1 ? 'dependency needs' : 'dependencies need'} updating
+                </h3>
+              </div>
+              <ul className="mt-2 space-y-1">
+                {outdatedDeps.map(({ node, versionInfo }) => (
+                  <li key={node?.id} className="flex items-center justify-between text-sm">
+                    <span className="text-amber-700">{node?.name}</span>
+                    <VersionBadge versionInfo={versionInfo} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Composer Files */}
           <div className="space-y-2">
             <div className="flex items-center gap-1.5 text-gray-900">
@@ -138,6 +215,14 @@ export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repo
                           className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Code className="h-3.5 w-3.5" />
+                        </a>
+                        <a
+                            href={`${repoUrl}/blob/${defaultBranch}/${file.replace('.json', '.lock')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Lock className="h-3.5 w-3.5"/>
                         </a>
                         <a
                           href={`${repoUrl}/commits/${defaultBranch}/${file}`}
@@ -166,24 +251,27 @@ export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repo
             <div className="bg-gray-50 rounded-lg p-3">
               {dependencies.length > 0 ? (
                 <ul className="space-y-1.5">
-                  {dependencies.map(({ id, version, node }) => (
+                  {dependencies.map(({ id, node, versionInfo, repoUrl }) => (
                     <li key={id} className="flex items-center justify-between group">
                       <div>
                         <span className="text-sm font-medium text-gray-900">{node?.name}</span>
-                        <span className="ml-1.5 text-xs text-gray-500">
-                          {node?.isMonorepo 
-                            ? `(Service in ${node.monorepoName})`
-                            : `v${version}`}
-                        </span>
+                        {node?.isMonorepo && (
+                          <span className="ml-1.5 text-xs text-gray-500">
+                            (Service in {node.monorepoName})
+                          </span>
+                        )}
                       </div>
-                      <a
-                        href={`${repoUrl}/blob/${defaultBranch}/composer.json`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <ArrowUpRight className="h-3.5 w-3.5" />
-                      </a>
+                      <div className="flex items-center gap-3">
+                        <VersionBadge versionInfo={versionInfo} />
+                        <a
+                          href={repoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <ArrowUpRight className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -202,24 +290,27 @@ export function RepoModal({ repoId, onClose, composerFiles = [], latestTag, repo
             <div className="bg-gray-50 rounded-lg p-3">
               {dependents.length > 0 ? (
                 <ul className="space-y-1.5">
-                  {dependents.map(({ id, version, node }) => (
+                  {dependents.map(({ id, node, versionInfo, repoUrl }) => (
                     <li key={id} className="flex items-center justify-between group">
                       <div>
                         <span className="text-sm font-medium text-gray-900">{node?.name}</span>
-                        <span className="ml-1.5 text-xs text-gray-500">
-                          {node?.isMonorepo 
-                            ? `(Service in ${node.monorepoName})`
-                            : `v${version}`}
-                        </span>
+                        {node?.isMonorepo && (
+                          <span className="ml-1.5 text-xs text-gray-500">
+                            (Service in {node.monorepoName})
+                          </span>
+                        )}
                       </div>
-                      <a
-                        href={`${repoUrl}/blob/${defaultBranch}/composer.json`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <ArrowUpRight className="h-3.5 w-3.5" />
-                      </a>
+                      <div className="flex items-center gap-3">
+                        <VersionBadge versionInfo={versionInfo} />
+                        <a
+                          href={repoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <ArrowUpRight className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
                     </li>
                   ))}
                 </ul>
