@@ -4,9 +4,10 @@ import type { EChartsOption } from 'echarts';
 import { useGithubStore } from '../../store/useGithubStore';
 
 const CATEGORY_COLORS = {
-  dependency: '#059669',
-  project: '#2563eb',
-  inactive: '#64748b'
+  monorepo: '#9333ea',    // Purple for monorepo services
+  dependency: '#059669',  // Green for dependencies
+  project: '#2563eb',     // Blue for standalone projects
+  inactive: '#64748b'     // Gray for inactive nodes
 };
 
 interface GraphViewProps {
@@ -23,7 +24,13 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       id: node.id,
       name: node.name,
       value: node.version,
-      category: node.color === '#059669' ? 'dependency' : node.color === '#2563eb' ? 'project' : 'inactive',
+      category: node.color === '#059669' 
+        ? 'dependency' 
+        : node.color === '#9333ea'
+          ? 'monorepo'
+          : node.color === '#2563eb'
+            ? 'project'
+            : 'inactive',
       symbolSize: 80,
       itemStyle: {
         opacity: selectedNode ? (node.id === selectedNode ? 1 : 0.3) : 1
@@ -82,6 +89,7 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
   const getOption = useCallback((): EChartsOption => {
     const { nodes, edges } = getGraphData();
     const categories = [
+      { name: 'monorepo', itemStyle: { color: CATEGORY_COLORS.monorepo } },
       { name: 'dependency', itemStyle: { color: CATEGORY_COLORS.dependency } },
       { name: 'project', itemStyle: { color: CATEGORY_COLORS.project } },
       { name: 'inactive', itemStyle: { color: CATEGORY_COLORS.inactive } }
