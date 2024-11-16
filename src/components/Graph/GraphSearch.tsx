@@ -86,7 +86,7 @@ export function GraphSearch({ onNodeSelect, selectedNode }: GraphSearchProps) {
                 }`}
               >
                 <div className="font-medium text-gray-900">{node.id}</div>
-                <div className="text-sm text-gray-500">v{node.version}</div>
+                <div className="text-sm text-gray-500">{node.version}</div>
               </li>
             ))}
           </ul>

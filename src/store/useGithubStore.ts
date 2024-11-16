@@ -55,7 +55,7 @@ function normalizeRepoName(name: string, organization: string): string {
 function extractDependencies(composerJson: ComposerJson, organization: string): Set<string> {
   const deps = new Set<string>();
   const orgLower = organization.toLowerCase();
-  
+
   const allDeps = {
     ...composerJson.require,
     ...composerJson['require-dev'],
@@ -71,14 +71,14 @@ function extractDependencies(composerJson: ComposerJson, organization: string): 
   if (composerJson.repositories) {
     Object.entries(composerJson.repositories).forEach(([name, repo]) => {
       if (
-        typeof repo === 'object' && 
-        repo !== null && 
-        'url' in repo && 
-        typeof repo.url === 'string'
+          typeof repo === 'object' &&
+          repo !== null &&
+          'url' in repo &&
+          typeof repo.url === 'string'
       ) {
         const url = repo.url.toLowerCase();
         const orgVariations = [`/${orgLower}/`, `/${organization}/`];
-        
+
         if (url.includes('github.com') && orgVariations.some(v => url.includes(v))) {
           const match = url.match(/github\.com\/[^\/]+\/([^\/\.]+)/i);
           if (match) {
@@ -91,6 +91,10 @@ function extractDependencies(composerJson: ComposerJson, organization: string): 
   }
 
   return deps;
+}
+
+function getMonorepoPackageId(repoName: string, composerName: string): string {
+  return `${repoName}||${composerName}`;
 }
 
 async function findComposerFiles(octokit: Octokit, owner: string, repo: string): Promise<string[]> {
@@ -117,13 +121,12 @@ async function findComposerFiles(octokit: Octokit, owner: string, repo: string):
       });
 
       return tree.tree
-        .filter(item => 
-          item.type === 'blob' && 
-          (item.path?.toLowerCase().endsWith('composer.json') || 
-           item.path?.toLowerCase().endsWith('composer.lock'))
-        )
-        .map(item => item.path!)
-        .filter(Boolean);
+          .filter(item =>
+              item.type === 'blob' &&
+              item.path?.toLowerCase().endsWith('composer.json')
+          )
+          .map(item => item.path!)
+          .filter(Boolean);
     } catch (error) {
       console.warn(`Error fetching tree for ${owner}/${repo}, falling back to manual checks:`, error);
       return [];
@@ -136,10 +139,11 @@ async function findComposerFiles(octokit: Octokit, owner: string, repo: string):
 
 async function getComposerLock(octokit: Octokit, owner: string, repo: string, path: string): Promise<ComposerLock | null> {
   try {
+    const lockPath = path.replace('composer.json', 'composer.lock');
     const { data: file } = await octokit.rest.repos.getContent({
       owner,
       repo,
-      path,
+      path: lockPath,
       request: {
         timeout: 10000
       }
@@ -156,291 +160,291 @@ async function getComposerLock(octokit: Octokit, owner: string, repo: string, pa
 }
 
 export const useGithubStore = create<GithubState & GithubActions>()(
-  persist(
-    (set, get) => ({
-      token: '',
-      organization: '',
-      organizations: [],
-      isValidatingToken: false,
-      isLoadingOrgs: false,
-      isLoading: false,
-      graphData: { nodes: [], links: [] },
-      error: null,
-      progress: null,
-      cache: {},
-      hasAttemptedFetch: false,
-
-      setToken: (token: string) => {
-        set({ token, error: null });
-      },
-
-      setOrganization: (org: string) => {
-        set({ organization: org, error: null });
-      },
-
-      clearError: () => {
-        set({ error: null });
-      },
-
-      clearCache: (org: string) => {
-        set(state => ({
-          cache: {
-            ...state.cache,
-            [org]: undefined
-          }
-        }));
-      },
-
-      validateToken: async () => {
-        const { token } = get();
-        set({ isValidatingToken: true, error: null });
-
-        try {
-          const octokit = new Octokit({ auth: token });
-          await octokit.rest.users.getAuthenticated();
-          set({ isValidatingToken: false });
-          return true;
-        } catch (error) {
-          set({
-            error: 'Invalid token. Please check your GitHub Personal Access Token.',
-            isValidatingToken: false,
-            token: '',
-          });
-          return false;
-        }
-      },
-
-      fetchOrganizations: async () => {
-        const { token } = get();
-        set({ isLoadingOrgs: true, error: null });
-
-        try {
-          const octokit = new Octokit({ auth: token });
-          const orgs = await octokit.paginate('GET /user/orgs', {
-            per_page: 100,
-          });
-
-          set({
-            organizations: orgs.map(org => ({
-              login: org.login,
-              name: org.name,
-            })),
-            isLoadingOrgs: false,
-          });
-        } catch (error) {
-          set({
-            error: 'Failed to fetch organizations.',
-            isLoadingOrgs: false,
-            organizations: [],
-          });
-        }
-      },
-
-      fetchDependencies: async () => {
-        const { token, organization, cache } = get();
-        
-        if (!organization) {
-          set({ error: 'Please provide organization' });
-          return;
-        }
-
-        set({ 
-          isLoading: true, 
-          error: null, 
-          progress: null, 
-          graphData: { nodes: [], links: [] },
-          hasAttemptedFetch: true
-        });
-
-        const cachedData = cache[organization];
-        if (cachedData && Date.now() - cachedData.timestamp < CACHE_EXPIRY) {
-          set({ 
-            graphData: cachedData.graphData,
-            isLoading: false,
-            progress: null,
-          });
-          return;
-        }
-
-        const octokit = new Octokit({ 
-          auth: token,
-          request: {
-            timeout: 10000
-          }
-        });
-
-        const nodes = new Map();
-        const links: GraphData['links'] = [];
-        const processedDeps = new Set<string>();
-        const versionMap = new Map<string, string>();
-
-        try {
-          const repos = await octokit.paginate('GET /orgs/{org}/repos', {
-            org: organization,
-            per_page: 100
-          });
-
-          const now = new Date().getTime();
-          const activeRepos = repos.filter((repo: Repository) => {
-            const pushedAt = new Date(repo.pushed_at).getTime();
-            return !repo.archived && (now - pushedAt <= TWO_WEEKS);
-          });
-
-          for (const [index, repo] of activeRepos.entries()) {
-            const normalizedRepoName = repo.name.toLowerCase();
-            const composerFiles = await findComposerFiles(octokit, organization, repo.name);
-            const isPhp = composerFiles.some(file => file.endsWith('composer.json'));
-            const dependencies: string[] = [];
-
-            let composerLock: ComposerLock | null = null;
-            const lockFile = composerFiles.find(file => file.endsWith('composer.lock'));
-            if (lockFile) {
-              composerLock = await getComposerLock(octokit, organization, repo.name, lockFile);
-            }
-
-            for (const composerPath of composerFiles) {
-              if (!composerPath.endsWith('composer.json')) continue;
-
-              try {
-                const { data: file } = await octokit.rest.repos.getContent({
-                  owner: organization,
-                  repo: repo.name,
-                  path: composerPath,
-                  request: {
-                    timeout: 10000
-                  }
-                });
-
-                if ('content' in file) {
-                  const content = decodeBase64(file.content);
-                  const composerJson: ComposerJson = JSON.parse(content);
-                  const deps = extractDependencies(composerJson, organization);
-                  
-                  deps.forEach(dep => {
-                    const normalizedDep = dep.toLowerCase();
-                    if (!dependencies.includes(normalizedDep)) {
-                      dependencies.push(normalizedDep);
-                    }
-
-                    // Get actual version from composer.lock if available
-                    if (composerLock) {
-                      const allPackages = [
-                        ...(composerLock.packages || []),
-                        ...(composerLock['packages-dev'] || [])
-                      ];
-                      const lockPackage = allPackages.find(p => p.name.toLowerCase() === normalizedDep);
-                      if (lockPackage) {
-                        versionMap.set(normalizedDep, lockPackage.version);
-                      }
-                    }
-                  });
-
-                  const repoId = `${organization}/${normalizedRepoName}`;
-                  if (!nodes.has(repoId.toLowerCase())) {
-                    nodes.set(repoId.toLowerCase(), {
-                      id: repoId.toLowerCase(),
-                      name: normalizedRepoName,
-                      version: composerJson.version || 'dev-main',
-                      color: '#2563eb',
-                    });
-                  }
-
-                  deps.forEach(dep => {
-                    const normalizedDep = dep.toLowerCase();
-                    if (!nodes.has(normalizedDep)) {
-                      nodes.set(normalizedDep, {
-                        id: normalizedDep,
-                        name: normalizedDep.split('/')[1],
-                        version: versionMap.get(normalizedDep) || 'dev-main',
-                        color: '#059669',
-                      });
-                    }
-
-                    const linkKey = `${repoId.toLowerCase()}-${normalizedDep}`;
-                    if (!processedDeps.has(linkKey)) {
-                      const version = versionMap.get(normalizedDep) || 
-                                    composerJson.require?.[dep] || 
-                                    composerJson['require-dev']?.[dep] || 
-                                    'dev-main';
-                      
-                      links.push({
-                        source: repoId.toLowerCase(),
-                        target: normalizedDep,
-                        version
-                      });
-                      processedDeps.add(linkKey);
-                    }
-                  });
-                }
-              } catch (error) {
-                console.warn(`Error processing composer file ${composerPath} in ${repo.name}:`, error);
-              }
-            }
-
-            set({
-              progress: {
-                total: activeRepos.length,
-                current: index + 1,
-                currentRepo: repo.name,
-                isPhp,
-                dependencies
-              }
-            });
-          }
-
-          const graphData = {
-            nodes: Array.from(nodes.values()),
-            links,
-          };
-
-          if (graphData.nodes.length === 0) {
-            set({
-              error: 'No internal dependencies found between projects.',
-              isLoading: false,
-              progress: null,
-            });
-            return;
-          }
-
-          set(state => ({
-            graphData,
-            cache: {
-              ...state.cache,
-              [organization]: {
-                timestamp: Date.now(),
-                graphData,
-              }
-            },
-            isLoading: false,
-            progress: null,
-          }));
-        } catch (error) {
-          set({
-            error: 'Failed to fetch dependencies. Please check your token and organization.',
-            isLoading: false,
-            progress: null,
-            graphData: { nodes: [], links: [] },
-          });
-        }
-      },
-
-      reset: () => {
-        set({
+    persist(
+        (set, get) => ({
           token: '',
           organization: '',
           organizations: [],
+          isValidatingToken: false,
+          isLoadingOrgs: false,
+          isLoading: false,
           graphData: { nodes: [], links: [] },
           error: null,
           progress: null,
+          cache: {},
           hasAttemptedFetch: false,
-        });
-      },
-    }),
-    {
-      name: 'github-deps-store',
-      partialize: (state) => ({
-        cache: state.cache,
-      }),
-    }
-  )
+
+          setToken: (token: string) => {
+            set({ token, error: null });
+          },
+
+          setOrganization: (org: string) => {
+            set({ organization: org, error: null });
+          },
+
+          clearError: () => {
+            set({ error: null });
+          },
+
+          clearCache: (org: string) => {
+            set(state => ({
+              cache: {
+                ...state.cache,
+                [org]: undefined
+              }
+            }));
+          },
+
+          validateToken: async () => {
+            const { token } = get();
+            set({ isValidatingToken: true, error: null });
+
+            try {
+              const octokit = new Octokit({ auth: token });
+              await octokit.rest.users.getAuthenticated();
+              set({ isValidatingToken: false });
+              return true;
+            } catch (error) {
+              set({
+                error: 'Invalid token. Please check your GitHub Personal Access Token.',
+                isValidatingToken: false,
+                token: '',
+              });
+              return false;
+            }
+          },
+
+          fetchOrganizations: async () => {
+            const { token } = get();
+            set({ isLoadingOrgs: true, error: null });
+
+            try {
+              const octokit = new Octokit({ auth: token });
+              const orgs = await octokit.paginate('GET /user/orgs', {
+                per_page: 100,
+              });
+
+              set({
+                organizations: orgs.map(org => ({
+                  login: org.login,
+                  name: org.name,
+                })),
+                isLoadingOrgs: false,
+              });
+            } catch (error) {
+              set({
+                error: 'Failed to fetch organizations.',
+                isLoadingOrgs: false,
+                organizations: [],
+              });
+            }
+          },
+
+          fetchDependencies: async () => {
+            const { token, organization, cache } = get();
+
+            if (!organization) {
+              set({ error: 'Please provide organization' });
+              return;
+            }
+
+            set({
+              isLoading: true,
+              error: null,
+              progress: null,
+              graphData: { nodes: [], links: [] },
+              hasAttemptedFetch: true
+            });
+
+            const cachedData = cache[organization];
+            if (cachedData && Date.now() - cachedData.timestamp < CACHE_EXPIRY) {
+              set({
+                graphData: cachedData.graphData,
+                isLoading: false,
+                progress: null,
+              });
+              return;
+            }
+
+            const octokit = new Octokit({
+              auth: token,
+              request: {
+                timeout: 10000
+              }
+            });
+
+            const nodes = new Map();
+            const links: GraphData['links'] = [];
+            const processedDeps = new Set<string>();
+            const versionMap = new Map<string, string>();
+
+            try {
+              const repos = await octokit.paginate('GET /orgs/{org}/repos', {
+                org: organization,
+                per_page: 100
+              });
+
+              const now = new Date().getTime();
+              const activeRepos = repos.filter((repo: Repository) => {
+                const pushedAt = new Date(repo.pushed_at).getTime();
+                return !repo.archived && (now - pushedAt <= TWO_WEEKS);
+              });
+
+              for (const [index, repo] of activeRepos.entries()) {
+                const normalizedRepoName = repo.name.toLowerCase();
+                const composerFiles = await findComposerFiles(octokit, organization, repo.name);
+                const isPhp = composerFiles.length > 0;
+                const dependencies: string[] = [];
+
+                for (const composerPath of composerFiles) {
+                  try {
+                    const { data: file } = await octokit.rest.repos.getContent({
+                      owner: organization,
+                      repo: repo.name,
+                      path: composerPath,
+                      request: {
+                        timeout: 10000
+                      }
+                    });
+
+                    if ('content' in file) {
+                      const content = decodeBase64(file.content);
+                      const composerJson: ComposerJson = JSON.parse(content);
+                      const deps = extractDependencies(composerJson, organization);
+
+                      const composerLock = await getComposerLock(octokit, organization, repo.name, composerPath);
+
+                      // Get the package name from composer.json
+                      const packageName = composerJson.name?.toLowerCase();
+                      if (!packageName) continue;
+
+                      // Create a unique ID for this package in the monorepo
+                      const packageId = getMonorepoPackageId(`${organization}/${normalizedRepoName}`, packageName);
+
+                      deps.forEach(dep => {
+                        const normalizedDep = dep.toLowerCase();
+                        if (!dependencies.includes(normalizedDep)) {
+                          dependencies.push(normalizedDep);
+                        }
+
+                        // Get actual version from composer.lock if available
+                        if (composerLock) {
+                          const allPackages = [
+                            ...(composerLock.packages || []),
+                            ...(composerLock['packages-dev'] || [])
+                          ];
+                          const lockPackage = allPackages.find(p => p.name.toLowerCase() === normalizedDep);
+                          if (lockPackage) {
+                            versionMap.set(normalizedDep, lockPackage.version);
+                          }
+                        }
+                      });
+
+                      if (!nodes.has(packageId.toLowerCase())) {
+                        nodes.set(packageId.toLowerCase(), {
+                          id: packageId.toLowerCase(),
+                          name: packageName.split('/')[1],
+                          version: composerJson.version || 'dev-main',
+                          color: '#2563eb',
+                        });
+                      }
+
+                      deps.forEach(dep => {
+                        const normalizedDep = dep.toLowerCase();
+                        if (!nodes.has(normalizedDep)) {
+                          nodes.set(normalizedDep, {
+                            id: normalizedDep,
+                            name: normalizedDep.split('/')[1],
+                            version: versionMap.get(normalizedDep) || 'dev-main',
+                            color: '#059669',
+                          });
+                        }
+
+                        const linkKey = `${packageId.toLowerCase()}-${normalizedDep}`;
+                        if (!processedDeps.has(linkKey)) {
+                          const version = versionMap.get(normalizedDep) ||
+                              composerJson.require?.[dep] ||
+                              composerJson['require-dev']?.[dep] ||
+                              'dev-main';
+
+                          links.push({
+                            source: packageId.toLowerCase(),
+                            target: normalizedDep,
+                            version
+                          });
+                          processedDeps.add(linkKey);
+                        }
+                      });
+                    }
+                  } catch (error) {
+                    console.warn(`Error processing composer file ${composerPath} in ${repo.name}:`, error);
+                  }
+                }
+
+                set({
+                  progress: {
+                    total: activeRepos.length,
+                    current: index + 1,
+                    currentRepo: repo.name,
+                    isPhp,
+                    dependencies
+                  }
+                });
+              }
+
+              const graphData = {
+                nodes: Array.from(nodes.values()),
+                links,
+              };
+
+              if (graphData.nodes.length === 0) {
+                set({
+                  error: 'No internal dependencies found between projects.',
+                  isLoading: false,
+                  progress: null,
+                });
+                return;
+              }
+
+              set(state => ({
+                graphData,
+                cache: {
+                  ...state.cache,
+                  [organization]: {
+                    timestamp: Date.now(),
+                    graphData,
+                  }
+                },
+                isLoading: false,
+                progress: null,
+              }));
+            } catch (error) {
+              set({
+                error: 'Failed to fetch dependencies. Please check your token and organization.',
+                isLoading: false,
+                progress: null,
+                graphData: { nodes: [], links: [] },
+              });
+            }
+          },
+
+          reset: () => {
+            set({
+              token: '',
+              organization: '',
+              organizations: [],
+              graphData: { nodes: [], links: [] },
+              error: null,
+              progress: null,
+              hasAttemptedFetch: false,
+            });
+          },
+        }),
+        {
+          name: 'github-deps-store',
+          partialize: (state) => ({
+            cache: state.cache,
+          }),
+        }
+    )
 );

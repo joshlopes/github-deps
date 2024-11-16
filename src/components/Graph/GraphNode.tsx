@@ -25,7 +25,7 @@ export const GraphNode = memo(({ data, selected }: NodeProps<NodeData>) => {
       >
         <div className="font-medium text-center">{data.label}</div>
         {data.version && (
-          <div className="text-xs opacity-80 text-center">v{data.version}</div>
+          <div className="text-xs opacity-80 text-center">{data.version}</div>
         )}
       </div>
       <Handle type="source" position={Position.Bottom} className="!bg-slate-300" />
