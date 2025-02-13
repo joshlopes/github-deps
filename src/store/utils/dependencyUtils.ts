@@ -1,5 +1,5 @@
-import { Octokit } from 'octokit';
-import { ComposerJson } from '../../types';
+import {Octokit} from 'octokit';
+import {ComposerJson} from '../../types';
 
 export interface VersionInfo {
   current: string;
@@ -8,12 +8,11 @@ export interface VersionInfo {
 }
 
 export function decodeBase64(base64: string): string {
-  const binaryString = atob(base64.replace(/\s/g, ''));
-  return binaryString;
+  return atob(base64.replace(/\s/g, ''));
 }
 
 export function normalizeRepoName(name: string, organization: string): string {
-  const [orgName, repoName] = name.split('/');
+  const [, repoName] = name.split('/');
   return `${organization}/${repoName.toLowerCase()}`;
 }
 
@@ -30,7 +29,7 @@ export function extractDependencies(composerJson: ComposerJson, organization: st
     ...composerJson['require-dev'],
   };
 
-  Object.entries(allDeps).forEach(([dep, version]) => {
+  Object.entries(allDeps).forEach(([dep, ]) => {
     const depLower = dep.toLowerCase();
     if (depLower.startsWith(`${orgLower}/`)) {
       deps.add(normalizeRepoName(dep, organization));
@@ -38,7 +37,7 @@ export function extractDependencies(composerJson: ComposerJson, organization: st
   });
 
   if (composerJson.repositories) {
-    Object.entries(composerJson.repositories).forEach(([name, repo]) => {
+    Object.entries(composerJson.repositories).forEach(([, repo]) => {
       if (
         typeof repo === 'object' &&
         repo !== null &&
@@ -137,10 +136,33 @@ export async function getLatestTag(octokit: Octokit, owner: string, repo: string
 
     // Sort tags by creation date (newest first)
     const sortedTags = tags.sort((a, b) => {
-      // Get commit dates for comparison
-      const dateA = new Date(a.commit.created_at || 0);
-      const dateB = new Date(b.commit.created_at || 0);
-      return dateB.getTime() - dateA.getTime();
+      const versionInfo = getVersionDifference(a.name, b.name);
+      if (versionInfo.type === 'none') {
+          return 0;
+      }
+      const parsedA = parseVersion(a.name);
+      const parsedB = parseVersion(b.name);
+
+        if (versionInfo.type === 'major' && parsedA.major > parsedB.major) {
+            return -1;
+        }
+        if (versionInfo.type === 'major' && parsedA.major < parsedB.major) {
+            return 1;
+        }
+        if (versionInfo.type === 'minor' && parsedA.minor > parsedB.minor) {
+            return -1;
+        }
+        if (versionInfo.type === 'minor' && parsedA.minor < parsedB.minor) {
+            return 1;
+        }
+        if (versionInfo.type === 'patch' && parsedA.patch > parsedB.patch) {
+            return -1;
+        }
+        if (versionInfo.type === 'patch' && parsedA.patch < parsedB.patch) {
+            return 1;
+        }
+
+        return 0;
     });
 
     // Return the most recent tag name without 'v' prefix
