@@ -20,7 +20,7 @@ function VersionBadge({ versionInfo }: { versionInfo: VersionInfo }) {
   if (versionInfo.type === 'none') {
     return (
       <span className="text-xs text-gray-500">
-        v{versionInfo.current}
+        {versionInfo.current}
       </span>
     );
   }
