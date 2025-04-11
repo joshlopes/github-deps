@@ -56,20 +56,20 @@ describe('useGithubStore Unit Tests', () => {
 
   it('should extract internal dependencies from both require and repositories sections', async () => {
     const mockComposerJson = {
-      name: 'lendable/service-a',
+      name: 'fooOrg/service-a',
       require: {
         'php': '>=8.2',
-        'lendable/name-matching': '^2.0',
+        'fooOrg/name-matching': '^2.0',
         'symfony/console': '^6.0'
       },
       repositories: {
-        'lendable/name-matching': {
+        'fooOrg/name-matching': {
           type: 'vcs',
-          url: 'https://github.com/Lendable/name-matching.git'
+          url: 'https://github.com/fooOrg/name-matching.git'
         },
-        'lendable/event-projector': {
+        'fooOrg/event-projector': {
           type: 'vcs',
-          url: 'https://github.com/Lendable/event-projector.git'
+          url: 'https://github.com/fooOrg/event-projector.git'
         }
       }
     };
@@ -97,7 +97,7 @@ describe('useGithubStore Unit Tests', () => {
 
     // Set token and organization
     useGithubStore.getState().setToken('test-token');
-    useGithubStore.getState().setOrganization('lendable');
+    useGithubStore.getState().setOrganization('fooOrg');
 
     // Set selected repositories
     useGithubStore.setState({
@@ -116,8 +116,8 @@ describe('useGithubStore Unit Tests', () => {
 
     // Verify all internal dependencies are detected
     const expectedDeps = [
-      'lendable/name-matching',
-      'lendable/event-projector'
+      'fooOrg/name-matching',
+      'fooOrg/event-projector'
     ];
 
     expectedDeps.forEach(dep => {
@@ -132,8 +132,8 @@ describe('useGithubStore Unit Tests', () => {
     // Verify links are created correctly
     expect(graphData.links).toContainEqual(
       expect.objectContaining({
-        source: 'lendable/service-a>lendable/service-a',
-        target: 'lendable/name-matching',
+        source: 'fooOrg/service-a>fooOrg/service-a',
+        target: 'fooOrg/name-matching',
         version: '^2.0'
       })
     );
@@ -148,14 +148,14 @@ describe('useGithubStore Unit Tests', () => {
 
   it('should handle nested composer.json files', async () => {
     const mockComposerJson = {
-      name: 'lendable/service-b',
+      name: 'fooOrg/service-b',
       require: {
-        'lendable/core': '^1.0'
+        'fooOrg/core': '^1.0'
       },
       repositories: {
-        'lendable/core': {
+        'fooOrg/core': {
           type: 'vcs',
-          url: 'https://github.com/Lendable/core.git'
+          url: 'https://github.com/fooOrg/core.git'
         }
       }
     };
@@ -187,7 +187,7 @@ describe('useGithubStore Unit Tests', () => {
 
     // Set token and organization
     useGithubStore.getState().setToken('test-token');
-    useGithubStore.getState().setOrganization('lendable');
+    useGithubStore.getState().setOrganization('fooOrg');
 
     // Set selected repositories
     useGithubStore.setState({
