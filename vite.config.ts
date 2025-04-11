@@ -14,5 +14,17 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       host: true,
     },
+    build: {
+      outDir: 'dist',
+      assetsDir: 'assets',
+      rollupOptions: {
+        output: {
+          manualChunks: undefined,
+        },
+      },
+    },
+    esbuild: {
+      logOverride: { 'this-is-undefined-in-esm': 'silent' }
+    },
   };
 });
