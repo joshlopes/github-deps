@@ -39,7 +39,7 @@ describe('dependencyUtils', () => {
 
   describe('extractDependencies', () => {
     const organization = 'MyOrg';
-    
+
     it('should extract dependencies from require and require-dev', () => {
       const composerJson = {
         require: {
@@ -52,7 +52,7 @@ describe('dependencyUtils', () => {
         }
       };
 
-      const deps = extractDependencies(composerJson, organization);
+      const deps = extractDependencies(composerJson as any, organization);
       expect(deps.size).toBe(2);
       expect(deps.has('MyOrg/package1')).toBe(true);
       expect(deps.has('MyOrg/package2')).toBe(true);
@@ -73,7 +73,7 @@ describe('dependencyUtils', () => {
         ]
       };
 
-      const deps = extractDependencies(composerJson, organization);
+      const deps = extractDependencies(composerJson as any, organization);
       expect(deps.size).toBe(1);
       expect(deps.has('MyOrg/repo1')).toBe(true);
     });
@@ -86,7 +86,7 @@ describe('dependencyUtils', () => {
         }
       };
 
-      const deps = extractDependencies(composerJson, 'MyOrg');
+      const deps = extractDependencies(composerJson as any, 'MyOrg');
       expect(deps.size).toBe(2);
       expect(deps.has('MyOrg/package')).toBe(true);
       expect(deps.has('MyOrg/another')).toBe(true);
@@ -204,44 +204,114 @@ describe('dependencyUtils', () => {
   });
 
   describe('getVersionDifference', () => {
-    it('should detect major version differences', () => {
-      expect(getVersionDifference('1.0.0', '2.0.0')).toEqual({
-        current: '1.0.0',
-        latest: '2.0.0',
-        type: 'major'
-      });
+    it('should correctly identify major version differences', () => {
+      expect(getVersionDifference('1.0.0', '2.0.0').type).toBe('major');
+      expect(getVersionDifference('0.63.0', '4.0.0').type).toBe('major');
+      expect(getVersionDifference('v1.0.0', 'v2.0.0').type).toBe('major');
     });
 
-    it('should detect minor version differences', () => {
-      expect(getVersionDifference('1.0.0', '1.1.0')).toEqual({
-        current: '1.0.0',
-        latest: '1.1.0',
-        type: 'minor'
-      });
+    it('should correctly identify minor version differences', () => {
+      expect(getVersionDifference('2.0.0', '2.1.0').type).toBe('minor');
+      expect(getVersionDifference('v2.0', 'v2.1').type).toBe('minor');
+      expect(getVersionDifference('2.0', '2.1.0').type).toBe('minor');
     });
 
-    it('should detect patch version differences', () => {
-      expect(getVersionDifference('1.0.0', '1.0.1')).toEqual({
-        current: '1.0.0',
-        latest: '1.0.1',
-        type: 'patch'
-      });
+    it('should correctly identify patch version differences', () => {
+      expect(getVersionDifference('2.1.0', '2.1.1').type).toBe('patch');
+      expect(getVersionDifference('v2.1.0', 'v2.1.1').type).toBe('patch');
+      expect(getVersionDifference('2.1', '2.1.1').type).toBe('patch');
     });
 
-    it('should handle equal versions', () => {
-      expect(getVersionDifference('1.0.0', '1.0.0')).toEqual({
-        current: '1.0.0',
-        latest: '1.0.0',
-        type: 'none'
-      });
+    it('should handle partial version numbers', () => {
+      expect(getVersionDifference('2', '3').type).toBe('major');
+      expect(getVersionDifference('2.0', '3').type).toBe('major');
+      expect(getVersionDifference('2.1', '2.2').type).toBe('minor');
     });
 
-    it('should handle invalid versions', () => {
-      expect(getVersionDifference('invalid', '1.0.0')).toEqual({
-        current: 'invalid',
-        latest: '1.0.0',
-        type: 'none'
-      });
+    it('should handle non-standard version formats', () => {
+      expect(getVersionDifference('v2.1-dev', 'v2.2').type).toBe('minor');
+      expect(getVersionDifference('2.1.x', '2.2.0').type).toBe('minor');
+      expect(getVersionDifference('v2.x', 'v3.0').type).toBe('major');
+    });
+
+    it('should handle prerelease versions', () => {
+      expect(getVersionDifference('2.0.0-alpha', '2.0.0').type).toBe('patch');
+      expect(getVersionDifference('2.0.0-beta', '2.0.0-alpha').type).toBe('none');
+      expect(getVersionDifference('2.0.0', '2.0.0-beta').type).toBe('none');
+    });
+  });
+
+  describe('getLatestTag', () => {
+    it('should handle pagination and return the latest version', async () => {
+      const mockOctokit = {
+        rest: {
+          repos: {
+            listTags: vi.fn()
+              .mockResolvedValueOnce({
+                data: [
+                  { name: 'v2.0.0' }, // Put the highest version in the first page
+                  { name: 'v1.8.0' },
+                  { name: 'v1.7.0' }
+                ]
+              })
+              .mockResolvedValueOnce({
+                data: [
+                  { name: 'v1.9.0' },
+                  { name: 'v1.10.0' },
+                  { name: 'v1.9.1' }
+                ]
+              })
+              .mockResolvedValueOnce({
+                data: []
+              })
+          }
+        }
+      };
+
+      const tag = await getLatestTag(mockOctokit as unknown as Octokit, 'owner', 'repo');
+      expect(tag).toBe('2.0.0');
+      expect(mockOctokit.rest.repos.listTags).toHaveBeenCalledTimes(1);
+    });
+
+    it('should correctly sort mixed version formats', async () => {
+      const mockOctokit = {
+        rest: {
+          repos: {
+            listTags: vi.fn().mockResolvedValue({
+              data: [
+                { name: 'v0.63.0' },
+                { name: 'v4.0' },
+                { name: '3.0' },
+                { name: 'v2' },
+                { name: 'v1.0.0-alpha' }
+              ]
+            })
+          }
+        }
+      };
+
+      const tag = await getLatestTag(mockOctokit as unknown as Octokit, 'owner', 'repo');
+      expect(tag).toBe('4.0');
+    });
+
+    it('should prefer stable versions over prereleases', async () => {
+      const mockOctokit = {
+        rest: {
+          repos: {
+            listTags: vi.fn().mockResolvedValue({
+              data: [
+                { name: 'v2.0.0-beta' },
+                { name: 'v2.0.0-alpha' },
+                { name: 'v1.9.0' },
+                { name: 'v2.0.0-rc1' }
+              ]
+            })
+          }
+        }
+      };
+
+      const tag = await getLatestTag(mockOctokit as unknown as Octokit, 'owner', 'repo');
+      expect(tag).toBe('1.9.0');
     });
   });
 });

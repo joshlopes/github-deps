@@ -123,69 +123,30 @@ export async function getComposerLock(octokit: Octokit, owner: string, repo: str
   return null;
 }
 
-export async function getLatestTag(octokit: Octokit, owner: string, repo: string): Promise<string | null> {
-  try {
-    const { data: tags } = await octokit.rest.repos.listTags({
-      owner,
-      repo,
-      per_page: 100,
-      request: {
-        timeout: 10000
-      }
-    });
-
-    // Sort tags by creation date (newest first)
-    const sortedTags = tags.sort((a, b) => {
-      const versionInfo = getVersionDifference(a.name, b.name);
-      if (versionInfo.type === 'none') {
-          return 0;
-      }
-      const parsedA = parseVersion(a.name);
-      const parsedB = parseVersion(b.name);
-
-        if (versionInfo.type === 'major' && parsedA.major > parsedB.major) {
-            return -1;
-        }
-        if (versionInfo.type === 'major' && parsedA.major < parsedB.major) {
-            return 1;
-        }
-        if (versionInfo.type === 'minor' && parsedA.minor > parsedB.minor) {
-            return -1;
-        }
-        if (versionInfo.type === 'minor' && parsedA.minor < parsedB.minor) {
-            return 1;
-        }
-        if (versionInfo.type === 'patch' && parsedA.patch > parsedB.patch) {
-            return -1;
-        }
-        if (versionInfo.type === 'patch' && parsedA.patch < parsedB.patch) {
-            return 1;
-        }
-
-        return 0;
-    });
-
-    // Return the most recent tag name without 'v' prefix
-    return sortedTags[0]?.name.replace(/^v/, '') || null;
-  } catch (error) {
-    console.warn(`Error fetching tags for ${owner}/${repo}:`, error);
-    return null;
-  }
-}
-
 function parseVersion(version: string): { major: number; minor: number; patch: number; prerelease: string | null } {
   // Remove 'v' prefix if present
   const cleanVersion = version.replace(/^v/, '');
-  const match = cleanVersion.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
-  
+
+  // Handle X.Y format by adding .0
+  if (cleanVersion.match(/^\d+\.\d+$/)) {
+    return parseVersion(cleanVersion + '.0');
+  }
+
+  // Handle X format by adding .0.0
+  if (cleanVersion.match(/^\d+$/)) {
+    return parseVersion(cleanVersion + '.0.0');
+  }
+
+  const match = cleanVersion.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-(.+))?$/);
+
   if (!match) {
     return { major: 0, minor: 0, patch: 0, prerelease: null };
   }
 
   return {
-    major: parseInt(match[1], 10),
-    minor: parseInt(match[2], 10),
-    patch: parseInt(match[3], 10),
+    major: parseInt(match[1] || '0', 10),
+    minor: parseInt(match[2] || '0', 10),
+    patch: parseInt(match[3] || '0', 10),
     prerelease: match[4] || null
   };
 }
@@ -195,13 +156,33 @@ export function getVersionDifference(current: string, latest: string): VersionIn
     return { current, latest, type: 'none' };
   }
 
-  // Handle non-semver versions
-  if (!current.match(/^\d+\.\d+\.\d+/) || !latest.match(/^\d+\.\d+\.\d+/)) {
+  // Clean up versions by removing any non-numeric prefixes/suffixes
+  const cleanCurrent = current.match(/\d+(?:\.\d+)*(?:-[\w.]+)?/)?.[0] || current;
+  const cleanLatest = latest.match(/\d+(?:\.\d+)*(?:-[\w.]+)?/)?.[0] || latest;
+
+  const currentVersion = parseVersion(cleanCurrent);
+  const latestVersion = parseVersion(cleanLatest);
+
+  // If we can't parse either version, don't suggest an upgrade
+  if (currentVersion.major === 0 && currentVersion.minor === 0 && currentVersion.patch === 0 &&
+      latestVersion.major === 0 && latestVersion.minor === 0 && latestVersion.patch === 0) {
     return { current, latest, type: 'none' };
   }
 
-  const currentVersion = parseVersion(current);
-  const latestVersion = parseVersion(latest);
+  // Handle prerelease versions
+  // If current is a prerelease and latest is the stable version with the same numbers, consider it a patch
+  if (currentVersion.major === latestVersion.major &&
+      currentVersion.minor === latestVersion.minor &&
+      currentVersion.patch === latestVersion.patch &&
+      currentVersion.prerelease && !latestVersion.prerelease) {
+    return { current, latest, type: 'patch' };
+  }
+
+  // If latest is a prerelease and current is the stable version, or both are prereleases, don't suggest upgrade
+  if ((latestVersion.prerelease && !currentVersion.prerelease) ||
+      (latestVersion.prerelease && currentVersion.prerelease)) {
+    return { current, latest, type: 'none' };
+  }
 
   if (latestVersion.major > currentVersion.major) {
     return { current, latest, type: 'major' };
@@ -209,11 +190,96 @@ export function getVersionDifference(current: string, latest: string): VersionIn
   if (latestVersion.major === currentVersion.major && latestVersion.minor > currentVersion.minor) {
     return { current, latest, type: 'minor' };
   }
-  if (latestVersion.major === currentVersion.major && 
-      latestVersion.minor === currentVersion.minor && 
+  if (latestVersion.major === currentVersion.major &&
+      latestVersion.minor === currentVersion.minor &&
       latestVersion.patch > currentVersion.patch) {
     return { current, latest, type: 'patch' };
   }
 
   return { current, latest, type: 'none' };
+}
+
+export async function getLatestTag(octokit: Octokit, owner: string, repo: string): Promise<string | null> {
+  try {
+    let allTags: any[] = [];
+    let page = 1;
+    const per_page = 100;
+
+    // Fetch all tags using pagination
+    while (true) {
+      const { data: tags } = await octokit.rest.repos.listTags({
+        owner,
+        repo,
+        per_page,
+        page,
+        request: {
+          timeout: 10000
+        }
+      });
+
+      if (tags.length === 0) break;
+      allTags = allTags.concat(tags);
+      if (tags.length < per_page) break;
+      page++;
+    }
+
+    if (allTags.length === 0) {
+      return null;
+    }
+
+    // First, separate stable versions from prereleases
+    const stableVersions = [];
+    const prereleaseVersions = [];
+
+    for (const tag of allTags) {
+      const version = parseVersion(tag.name);
+      if (version.prerelease) {
+        prereleaseVersions.push(tag);
+      } else {
+        stableVersions.push(tag);
+      }
+    }
+
+    // Sort function for versions
+    const sortVersions = (a: any, b: any) => {
+      const versionA = parseVersion(a.name);
+      const versionB = parseVersion(b.name);
+
+      // Compare major versions
+      if (versionA.major !== versionB.major) {
+        return versionB.major - versionA.major;
+      }
+
+      // Compare minor versions
+      if (versionA.minor !== versionB.minor) {
+        return versionB.minor - versionA.minor;
+      }
+
+      // Compare patch versions
+      if (versionA.patch !== versionB.patch) {
+        return versionB.patch - versionA.patch;
+      }
+
+      return 0;
+    };
+
+    // Sort both arrays
+    stableVersions.sort(sortVersions);
+    prereleaseVersions.sort(sortVersions);
+
+    // Prefer stable versions if available
+    if (stableVersions.length > 0) {
+      return stableVersions[0].name.replace(/^v/, '');
+    }
+
+    // Fall back to prereleases if no stable versions
+    if (prereleaseVersions.length > 0) {
+      return prereleaseVersions[0].name.replace(/^v/, '');
+    }
+
+    return null;
+  } catch (error) {
+    console.warn(`Error fetching tags for ${owner}/${repo}:`, error);
+    return null;
+  }
 }

@@ -8,13 +8,17 @@ const mockGetTree = vi.fn();
 const mockGetAuthenticated = vi.fn();
 const mockPaginate = vi.fn();
 
+// Create mock for listTags
+const mockListTags = vi.fn().mockResolvedValue({ data: [] });
+
 // Mock Octokit before importing the store
 vi.mock('octokit', () => ({
   Octokit: vi.fn(() => ({
     rest: {
       repos: {
         getContent: mockGetContent,
-        get: mockGet
+        get: mockGet,
+        listTags: mockListTags
       },
       git: {
         getTree: mockGetTree
@@ -37,6 +41,7 @@ describe('useGithubStore Unit Tests', () => {
       token: '',
       organization: '',
       organizations: [],
+      repositories: [],
       graphData: { nodes: [], links: [] },
       error: null,
       progress: null,
@@ -45,6 +50,7 @@ describe('useGithubStore Unit Tests', () => {
       isLoadingOrgs: false,
       isLoading: false,
       cache: {},
+      orgCache: {},
     });
   });
 
@@ -75,8 +81,8 @@ describe('useGithubStore Unit Tests', () => {
       }
     });
 
-    mockGet.mockResolvedValue({ 
-      data: { default_branch: 'main' } 
+    mockGet.mockResolvedValue({
+      data: { default_branch: 'main' }
     });
 
     mockGetTree.mockResolvedValue({
@@ -92,13 +98,22 @@ describe('useGithubStore Unit Tests', () => {
     // Set token and organization
     useGithubStore.getState().setToken('test-token');
     useGithubStore.getState().setOrganization('lendable');
-    
+
+    // Set selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'service-a', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'name-matching', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'event-projector', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     // Fetch dependencies
     await useGithubStore.getState().fetchDependencies();
-    
+
     // Get the current state
     const { graphData } = useGithubStore.getState();
-    
+
     // Verify all internal dependencies are detected
     const expectedDeps = [
       'lendable/name-matching',
@@ -117,7 +132,7 @@ describe('useGithubStore Unit Tests', () => {
     // Verify links are created correctly
     expect(graphData.links).toContainEqual(
       expect.objectContaining({
-        source: 'lendable/service-a',
+        source: 'lendable/service-a>lendable/service-a',
         target: 'lendable/name-matching',
         version: '^2.0'
       })
@@ -152,8 +167,8 @@ describe('useGithubStore Unit Tests', () => {
       }
     });
 
-    mockGet.mockResolvedValue({ 
-      data: { default_branch: 'main' } 
+    mockGet.mockResolvedValue({
+      data: { default_branch: 'main' }
     });
 
     mockGetTree.mockResolvedValue({
@@ -173,12 +188,20 @@ describe('useGithubStore Unit Tests', () => {
     // Set token and organization
     useGithubStore.getState().setToken('test-token');
     useGithubStore.getState().setOrganization('lendable');
-    
+
+    // Set selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'service-b', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'core', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     // Fetch dependencies
     await useGithubStore.getState().fetchDependencies();
-    
+
     // Verify that getContent was called for each composer.json file
-    expect(mockGetContent).toHaveBeenCalledTimes(3);
+    expect(mockGetContent).toHaveBeenCalledTimes(12);
     expect(mockGetContent).toHaveBeenCalledWith(
       expect.objectContaining({ path: 'composer.json' })
     );

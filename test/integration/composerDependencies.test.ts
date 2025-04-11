@@ -7,6 +7,7 @@ describe('Composer Dependencies Integration Tests', () => {
       token: '',
       organization: '',
       organizations: [],
+      repositories: [],
       graphData: { nodes: [], links: [] },
       error: null,
       progress: null,
@@ -15,13 +16,21 @@ describe('Composer Dependencies Integration Tests', () => {
       isLoadingOrgs: false,
       isLoading: false,
       cache: {},
+      orgCache: {},
     });
   });
 
   it('should fetch and process real composer.json from symfony/console', async () => {
     const store = useGithubStore.getState();
     store.setOrganization('symfony');
-    
+
+    // Add selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'console', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     await store.fetchDependencies();
 
     const { graphData, error } = useGithubStore.getState();
@@ -32,7 +41,7 @@ describe('Composer Dependencies Integration Tests', () => {
     expect(graphData.links.length).toBeGreaterThan(0);
 
     // Verify we found internal dependencies
-    const dependencyNodes = graphData.nodes.filter(node => 
+    const dependencyNodes = graphData.nodes.filter(node =>
       node.id.startsWith('symfony/')
     );
     expect(dependencyNodes.length).toBeGreaterThan(0);
@@ -48,14 +57,22 @@ describe('Composer Dependencies Integration Tests', () => {
   it('should properly handle repository statuses', async () => {
     const store = useGithubStore.getState();
     store.setOrganization('symfony');
-    
+
+    // Add selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'console', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'http-kernel', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     await store.fetchDependencies();
 
     const { graphData, error } = useGithubStore.getState();
     expect(error).toBeNull();
 
     // Get all repository nodes
-    const repoNodes = graphData.nodes.filter(node => 
+    const repoNodes = graphData.nodes.filter(node =>
       node.id.startsWith('symfony/')
     );
 
@@ -72,7 +89,14 @@ describe('Composer Dependencies Integration Tests', () => {
   it('should discover nested composer.json files', async () => {
     const store = useGithubStore.getState();
     store.setOrganization('symfony');
-    
+
+    // Add selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'framework-bundle', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     await store.fetchDependencies();
 
     const { graphData, error } = useGithubStore.getState();
@@ -93,7 +117,16 @@ describe('Composer Dependencies Integration Tests', () => {
   it('should handle version constraints correctly', async () => {
     const store = useGithubStore.getState();
     store.setOrganization('symfony');
-    
+
+    // Add selected repositories
+    useGithubStore.setState({
+      repositories: [
+        { name: 'console', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'http-kernel', selected: true, archived: false, pushed_at: new Date().toISOString() },
+        { name: 'framework-bundle', selected: true, archived: false, pushed_at: new Date().toISOString() }
+      ]
+    });
+
     await store.fetchDependencies();
 
     const { graphData, error } = useGithubStore.getState();
