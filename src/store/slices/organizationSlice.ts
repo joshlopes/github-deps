@@ -49,7 +49,7 @@ export const createOrganizationSlice: StateCreator<
       set({
         organizations: orgs.map(org => ({
           login: org.login,
-          name: org.name,
+          name: org.login, // Using login as name since name property doesn't exist
         })),
         isLoadingOrgs: false,
       });

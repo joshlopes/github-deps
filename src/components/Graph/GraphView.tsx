@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { EChartsOption } from 'echarts';
+import type { EChartsOption, GraphSeriesOption } from 'echarts/types/dist/shared';
+import type { SeriesOption } from 'echarts';
 import { useGithubStore } from '../../store/useGithubStore';
 import { RepoModal } from './RepoModal';
 
@@ -34,8 +35,8 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       id: node.id,
       name: node.name,
       value: node.version,
-      category: node.color === '#059669' 
-        ? 'dependency' 
+      category: node.color === '#059669'
+        ? 'dependency'
         : node.color === '#9333ea'
           ? 'monorepo'
           : node.color === '#2563eb'
@@ -47,11 +48,11 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       },
       label: {
         show: true,
-        position: 'bottom',
+        position: 'bottom' as const,
         distance: 5,
         formatter: [
           `{title|${node.name}}`,
-          node.isMonorepo 
+          node.isMonorepo
             ? `{monorepo|${node.monorepoName}}`
             : `{small|${node.version}}`
         ].join('\n'),
@@ -113,8 +114,9 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       { name: 'inactive', itemStyle: { color: CATEGORY_COLORS.inactive } }
     ];
 
-    let filteredNodes = nodes;
-    let filteredEdges = edges;
+    // Default to showing all nodes and edges
+    let filteredNodes = selectedNode ? [] : nodes;
+    let filteredEdges = selectedNode ? [] : edges;
 
     if (selectedNode) {
       const connectedNodeIds = new Set(
@@ -122,12 +124,12 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
           .filter(edge => edge.source === selectedNode || edge.target === selectedNode)
           .flatMap(edge => [edge.source, edge.target])
       );
-      
-      filteredNodes = nodes.filter(node => 
+
+      filteredNodes = nodes.filter(node =>
         connectedNodeIds.has(node.id) || node.id === selectedNode
       );
-      
-      filteredEdges = edges.filter(edge => 
+
+      filteredEdges = edges.filter(edge =>
         edge.source === selectedNode || edge.target === selectedNode
       );
 
@@ -167,46 +169,32 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
       },
       animationDuration: 1500,
       animationEasingUpdate: 'quinticInOut',
-      series: [
-        {
-          type: 'graph',
-          layout: 'force',
-          force: {
-            repulsion: 1200,
-            gravity: 0.1,
-            edgeLength: 250,
-            layoutAnimation: true
-          },
-          data: filteredNodes,
-          links: filteredEdges,
-          categories,
-          roam: true,
-          draggable: true,
-          label: {
-            position: 'bottom',
-            show: true
-          },
-          edgeLabel: {
-            show: true,
-            formatter: '{c}',
-            fontSize: 12
-          },
-          scaleLimit: {
-            min: 0.1,
-            max: 2
-          },
+      series: [{
+        type: 'graph',
+        layout: 'force',
+        force: {
+          repulsion: 1200,
+          gravity: 0.1,
+          edgeLength: 150,
+          layoutAnimation: true
+        },
+        data: filteredNodes,
+        links: filteredEdges,
+        categories: [
+          { name: 'dependency' },
+          { name: 'monorepo' },
+          { name: 'project' },
+          { name: 'inactive' }
+        ],
+        roam: true,
+        draggable: true,
+        emphasis: {
+          focus: 'adjacency',
           lineStyle: {
-            color: '#94a3b8',
-            curveness: 0.1
-          },
-          emphasis: {
-            focus: 'adjacency',
-            lineStyle: {
-              width: 4
-            }
+            width: 2
           }
         }
-      ]
+      }] as SeriesOption[]
     };
   }, [getGraphData, selectedNode, graphData.nodes]);
 
@@ -224,7 +212,7 @@ export function GraphView({ selectedNode, onNodeSelect }: GraphViewProps) {
             const [orgRepo] = params.data.id.split('>');
             const [, repo] = orgRepo.split('/');
             const node = graphData.nodes.find(n => n.id === params.data.id);
-            
+
             setModalInfo({
               repoId: params.data.id,
               composerFiles: node?.composerFiles || [],

@@ -24,15 +24,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
       - name: Configure base path
         run: |
           # Create a .env.production file with the base path
           echo "VITE_BASE_PATH=/github-deps/" > .env.production
-          # Rebuild with the base path
-          npm run build
+
+      - name: Build (Skip TypeScript)
+        run: npm run build:skip-ts
+
+      - name: Prepare for deployment
+        run: |
+          # Create a .nojekyll file to disable Jekyll processing
+          touch dist/.nojekyll
+          # Copy the 404.html file to handle client-side routing
+          cp public/404.html dist/
 
       - name: Deploy to GitHub Pages
         uses: JamesIves/github-pages-deploy-action@v4

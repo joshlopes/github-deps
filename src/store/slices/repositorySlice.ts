@@ -59,7 +59,7 @@ export const createRepositorySlice: StateCreator<
       }
 
       const octokit = new Octokit({ auth: token });
-      const repos = await octokit.paginate('GET /orgs/{org}/repos', {
+      const repos = await octokit.paginate(octokit.rest.repos.listForOrg, {
         org: organization,
         per_page: 100,
         request: {
@@ -69,7 +69,7 @@ export const createRepositorySlice: StateCreator<
 
       const activeRepos = await Promise.all(
         repos
-          .filter((repo: Repository) => {
+          .filter((repo: any) => {
             const pushedAt = new Date(repo.pushed_at).getTime();
             return !repo.archived && (now - pushedAt <= TWO_WEEKS);
           })
